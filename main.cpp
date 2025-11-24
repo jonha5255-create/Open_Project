@@ -6,6 +6,7 @@
 #include <time.h> //·£´ýÇÔ¼ö
 #include <algorithm>
 #include <vector>
+#include "Character.cpp"
 
 #include <gl/glew.h>
 #include <gl/freeglut.h>
