@@ -30,4 +30,18 @@
       <Filter>헤더 파일</Filter>
     </None>
   </ItemGroup>
+  <ItemGroup>
+    <Object Include="Fast_Runnig.obj">
+      <Filter>소스 파일</Filter>
+    </Object>
+    <Object Include="Octopus.obj">
+      <Filter>소스 파일</Filter>
+    </Object>
+    <Object Include="Rest.obj">
+      <Filter>소스 파일</Filter>
+    </Object>
+    <Object Include="Runnig.obj">
+      <Filter>소스 파일</Filter>
+    </Object>
+  </ItemGroup>
 </Project>

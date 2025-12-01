@@ -131,6 +131,12 @@
     <None Include="fragment.glsl" />
     <None Include="vertex.glsl" />
   </ItemGroup>
+  <ItemGroup>
+    <Object Include="Fast_Runnig.obj" />
+    <Object Include="Octopus.obj" />
+    <Object Include="Rest.obj" />
+    <Object Include="Runnig.obj" />
+  </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>
