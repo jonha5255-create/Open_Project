@@ -6,13 +6,110 @@
 #include <time.h> //랜덤함수
 #include <algorithm>
 #include <vector>
-#include "Character.cpp"
+#include "character.h"
+#include "octopus.h"
 
 #include <gl/glew.h>
 #include <gl/freeglut.h>
 #include <gl/freeglut_ext.h>
 
+#define MAX_LINE_LENGTH 256
 
+// ===== 구조체 수정 (법선 추가) =====
+typedef struct {
+	float x, y, z;
+} Vertex;
+
+typedef struct {
+	float x, y, z;
+} Normal;
+
+typedef struct {
+	unsigned int v1, v2, v3;
+	unsigned int n1, n2, n3;
+} Face;
+
+typedef struct {
+	Vertex* vertices;
+	size_t vertex_count;
+	Normal* normals;
+	size_t normal_count;
+	Face* faces;
+	size_t face_count;
+} Model;
+
+void read_newline(char* str) {
+	char* pos;
+	if ((pos = strchr(str, '\n')) != NULL)
+		*pos = '\0';
+}
+
+// ===== OBJ 파일 읽기 수정 (법선 파싱) =====
+void read_obj_file(const char* filename, Model* model) {
+	FILE* file;
+	fopen_s(&file, filename, "r");
+	if (!file) {
+		perror("Error opening file");
+		exit(EXIT_FAILURE);
+	}
+	char line[MAX_LINE_LENGTH];
+	model->vertex_count = 0;
+	model->normal_count = 0;
+	model->face_count = 0;
+
+	while (fgets(line, sizeof(line), file)) {
+		read_newline(line);
+		if (line[0] == 'v' && line[1] == ' ')
+			model->vertex_count++;
+		else if (line[0] == 'v' && line[1] == 'n')
+			model->normal_count++;
+		else if (line[0] == 'f' && line[1] == ' ')
+			model->face_count++;
+	}
+
+	fseek(file, 0, SEEK_SET);
+
+	model->vertices = (Vertex*)malloc(model->vertex_count * sizeof(Vertex));
+	model->normals = (Normal*)malloc(model->normal_count * sizeof(Normal));
+	model->faces = (Face*)malloc(model->face_count * sizeof(Face));
+
+	size_t vertex_index = 0;
+	size_t normal_index = 0;
+	size_t face_index = 0;
+
+	while (fgets(line, sizeof(line), file)) {
+		read_newline(line);
+		if (line[0] == 'v' && line[1] == ' ') {
+			sscanf_s(line + 2, "%f %f %f",
+				&model->vertices[vertex_index].x,
+				&model->vertices[vertex_index].y,
+				&model->vertices[vertex_index].z);
+			vertex_index++;
+		}
+		else if (line[0] == 'v' && line[1] == 'n') {
+			sscanf_s(line + 3, "%f %f %f",
+				&model->normals[normal_index].x,
+				&model->normals[normal_index].y,
+				&model->normals[normal_index].z);
+			normal_index++;
+		}
+		else if (line[0] == 'f' && line[1] == ' ') {
+			unsigned int v1, v2, v3, n1, n2, n3;
+			int result = sscanf_s(line + 2, "%u//%u %u//%u %u//%u",
+				&v1, &n1, &v2, &n2, &v3, &n3);
+			if (result == 6) {
+				model->faces[face_index].v1 = v1 - 1;
+				model->faces[face_index].v2 = v2 - 1;
+				model->faces[face_index].v3 = v3 - 1;
+				model->faces[face_index].n1 = n1 - 1;
+				model->faces[face_index].n2 = n2 - 1;
+				model->faces[face_index].n3 = n3 - 1;
+				face_index++;
+			}
+		}
+	}
+	fclose(file);
+}
 
 char* filetobuf(const char* file)
 {
@@ -30,19 +127,7 @@ char* filetobuf(const char* file)
 	fclose(fptr);
 	buf[length] = 0;
 	return buf;
-	//--- 프로그램맨앞에선언할것
-	// Open file for reading 
-	// Return NULL on failure 
-	// Seek to the end of the file 
-	// Find out how many bytes into the file we are 
-	// Allocate a buffer for the entire length of the file and a null terminator 
-	// Go back to the beginning of the file 
-	// Read the contents of the file in to the buffer 
-	// Close the file 
-	// Null terminator 
-	// Return the buffer 
 }
-
 
 
 
@@ -59,15 +144,20 @@ GLuint shaderProgramID; //--- 세이더 프로그램 이름
 GLuint vertexShader;    //--- 버텍스세이더객체
 GLuint fragmentShader;
 
+Model Charater, Octopus;
 
 
+void initmodel() {
+	// Character::initCharacter("character.obj", shaderProgramID);
+	Enemy::initOctopus("octopus.obj", shaderProgramID);
+}
 
 
-void main(int argc, char** argv)
+int main(int argc, char** argv)
 //--- 윈도우출력하고콜백함수설정
 {
-	width = 500;
-	height = 500;
+	width = 800;
+	height = 800;
 	//--- 윈도우생성하기
 	glutInit(&argc, argv);
 	glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGBA);
@@ -89,8 +179,10 @@ void main(int argc, char** argv)
 
 	//랜덤 시드 초기화
 	srand((unsigned int)time(NULL));
+	initmodel();
 
 	glutMainLoop();
+	return 0;
 }
 
 void make_vertexShaders()
@@ -173,13 +265,14 @@ GLuint make_shaderProgram()
 GLvoid drawScene()
 {
 	//--- 콜백 함수: 그리기콜백함수
-	GLfloat rColor, gColor, bColor;
-	rColor = gColor = 0.7;
-	bColor = 0.8;
-	glClearColor(rColor, gColor, bColor, 1.0f);
+	glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
 	glClear(GL_COLOR_BUFFER_BIT);
 	glUseProgram(shaderProgramID);
+
 	// 도형 그리기
+	//Character::drawCharacter();
+
+	Enemy::drawOctopus();
 
 
 	glBindVertexArray(0);
