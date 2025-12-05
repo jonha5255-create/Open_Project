@@ -2,25 +2,37 @@
 
 in vec3 FragPos;
 in vec3 Normal;
-in vec3 Color;
+in vec2 TexCoord;
 
 uniform vec3 lightPos;
 uniform vec3 lightColor;
 uniform vec3 viewPos;
+uniform vec3 objectColor;
+
+uniform sampler2D wallTexture;
+uniform bool useTexture;
 
 out vec4 FragColor;
 
 void main()
 {
-    // Ambient
+    // [추가] 텍스처 사용 여부에 따른 색상 결정
+    vec3 baseColor;
+    if (useTexture) {
+        baseColor = texture(wallTexture, TexCoord).rgb;
+    } else {
+        baseColor = objectColor;
+    }
+
+    // 주변광
     float ambientStrength = 0.3;
-    vec3 ambient = ambientStrength * Color;
+    vec3 ambient = ambientStrength * lightColor;
     
     // Diffuse
     vec3 norm = normalize(Normal);
     vec3 lightDir = normalize(lightPos - FragPos);
     float diff = max(dot(norm, lightDir), 0.0);
-    vec3 diffuse = diff * lightColor * Color;
+    vec3 diffuse = diff * lightColor;
     
     // Specular
     float specularStrength = 0.5;
@@ -29,6 +41,6 @@ void main()
     float spec = pow(max(dot(viewDir, reflectDir), 0.0), 32.0);
     vec3 specular = specularStrength * spec * lightColor;
     
-    vec3 result = ambient + diffuse + specular;
+    vec3 result = (ambient + diffuse + specular) * baseColor;
     FragColor = vec4(result, 1.0);
 }

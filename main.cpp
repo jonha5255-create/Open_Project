@@ -1,4 +1,5 @@
 #define _CRT_SECURE_NO_WARNINGS 
+#define STB_IMAGE_IMPLEMENTATION
 #include <stdlib.h>
 #include <stdio.h>
 #include <iostream>
@@ -16,6 +17,8 @@
 #include <gl/glm/gtc/matrix_transform.hpp>
 
 #include "character.h"
+#include "octopus.h"
+#include "stb_image.h"
 
 #define MAX_LINE_LENGTH 256
 
@@ -48,10 +51,13 @@ GLvoid specialKeyboard(int key, int x, int y);
 GLvoid specialKeyboardUp(int key, int x, int y);  // 특수키 떼기 함수
 GLvoid timer(int value);
 
+
 GLint width, height;
-GLuint shaderProgramID;
+GLuint shaderProgramID, g_wallTextureID;
 GLuint vertexShader;
 GLuint fragmentShader;
+GLuint tVAO = 0, tVBO = 0;
+GLuint VAO, VBO;
 
 // 캐릭터 위치 및 상태
 glm::vec3 characterPosition = glm::vec3(0.0f, 0.0f, 0.0f);
@@ -64,7 +70,7 @@ float cameraRotationY = 0.0f;
 float cameraOrbitAngle = 45.0f;
 float cameraOrbitRadius = 5.0f;
 
-// 테런 서바이벌 맵 카메라
+// 카메라 설정 상수
 static const float CAMERA_SIDE_OFFSET = 0.0f;   // 캐릭터 옆쪽 오프셋 (좌우)
 static const float CAMERA_BACK_DISTANCE = 4.5f; // 캐릭터 뒤쪽 거리
 static const float CAMERA_HEIGHT = 2.5f;        // 캐릭터 위의 높이
@@ -75,12 +81,11 @@ static const float CAMERA_TARGET_HEIGHT = 0.8f; // 카메라가 바라보는 높이
 bool cameraOrbitAnimation = false;         // 카메라 공전 애니메이션
 bool allAnimationsStopped = false;         // 모든 움직임 정지
 
-// 조명
-glm::vec3 lightPos = glm::vec3(5.0f, 5.0f, 5.0f);
-glm::vec3 lightColor = glm::vec3(1.0f, 1.0f, 1.0f);
 
 void InitBuffer();
 void UpdateCameraPosition();
+void InitTexture(const char* filename);
+void DrawTexturedCube(GLuint shaderID, glm::mat4 modelMat, glm::vec3 scale);
 
 // 키 상태 추적
 static bool keyStates[256] = {false};
@@ -112,6 +117,8 @@ void main(int argc, char** argv)
 		std::cerr << "캐릭터 초기화 실패" << std::endl;
 		exit(1);
 	}
+	InitTexture("MAP_WALL.jpg");
+
 
 	glutDisplayFunc(drawScene);
 	glutReshapeFunc(Reshape);
@@ -134,6 +141,127 @@ void main(int argc, char** argv)
 	std::cout << "q: 종료" << std::endl;
 
 	glutMainLoop();
+}
+
+// 1. 텍스처 파일 로드 함수 (PDF 방식 적용)
+void InitTexture(const char* filename) {
+	glGenTextures(1, &g_wallTextureID);
+	glBindTexture(GL_TEXTURE_2D, g_wallTextureID);
+
+	// 텍스처 파라미터 설정 (반복, 선형 보간)
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+
+	// 이미지 로드
+	int width, height, nrChannels;
+	stbi_set_flip_vertically_on_load(true); // 이미지 뒤집힘 방지
+	unsigned char* data = stbi_load(filename, &width, &height, &nrChannels, 0);
+
+	if (data) {
+		GLenum format = (nrChannels == 4) ? GL_RGBA : GL_RGB;
+		glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, data);
+		glGenerateMipmap(GL_TEXTURE_2D);
+	}
+	else {
+		std::cout << "텍스처 로드 실패: " << filename << std::endl;
+	}
+	stbi_image_free(data);
+}
+
+// 2. 텍스처가 적용된 큐브 그리기 함수 (새로 만듦)
+void DrawTexturedCube(GLuint shaderID, glm::mat4 modelMat, glm::vec3 scale) {
+	// 위치(3) + 법선(3) + UV좌표(2) = 8개 데이터
+	static float texCubeVertices[] = {
+		// 뒤
+		-0.5f, -0.5f, -0.5f,  0.0f,  0.0f, -1.0f,  0.0f, 0.0f,
+		 0.5f,  0.5f, -0.5f,  0.0f,  0.0f, -1.0f,  1.0f, 1.0f,
+		 0.5f, -0.5f, -0.5f,  0.0f,  0.0f, -1.0f,  1.0f, 0.0f,
+		 0.5f,  0.5f, -0.5f,  0.0f,  0.0f, -1.0f,  1.0f, 1.0f,
+		-0.5f, -0.5f, -0.5f,  0.0f,  0.0f, -1.0f,  0.0f, 0.0f,
+		-0.5f,  0.5f, -0.5f,  0.0f,  0.0f, -1.0f,  0.0f, 1.0f,
+		// 앞
+		-0.5f, -0.5f,  0.5f,  0.0f,  0.0f,  1.0f,  0.0f, 0.0f,
+		 0.5f, -0.5f,  0.5f,  0.0f,  0.0f,  1.0f,  1.0f, 0.0f,
+		 0.5f,  0.5f,  0.5f,  0.0f,  0.0f,  1.0f,  1.0f, 1.0f,
+		 0.5f,  0.5f,  0.5f,  0.0f,  0.0f,  1.0f,  1.0f, 1.0f,
+		-0.5f,  0.5f,  0.5f,  0.0f,  0.0f,  1.0f,  0.0f, 1.0f,
+		-0.5f, -0.5f,  0.5f,  0.0f,  0.0f,  1.0f,  0.0f, 0.0f,
+		// 왼쪽
+		-0.5f,  0.5f,  0.5f, -1.0f,  0.0f,  0.0f,  1.0f, 0.0f,
+		-0.5f,  0.5f, -0.5f, -1.0f,  0.0f,  0.0f,  1.0f, 1.0f,
+		-0.5f, -0.5f, -0.5f, -1.0f,  0.0f,  0.0f,  0.0f, 1.0f,
+		-0.5f, -0.5f, -0.5f, -1.0f,  0.0f,  0.0f,  0.0f, 1.0f,
+		-0.5f, -0.5f,  0.5f, -1.0f,  0.0f,  0.0f,  0.0f, 0.0f,
+		-0.5f,  0.5f,  0.5f, -1.0f,  0.0f,  0.0f,  1.0f, 0.0f,
+		// 오른쪽
+		 0.5f,  0.5f,  0.5f,  1.0f,  0.0f,  0.0f,  1.0f, 0.0f,
+		 0.5f, -0.5f, -0.5f,  1.0f,  0.0f,  0.0f,  0.0f, 1.0f,
+		 0.5f,  0.5f, -0.5f,  1.0f,  0.0f,  0.0f,  1.0f, 1.0f,
+		 0.5f, -0.5f, -0.5f,  1.0f,  0.0f,  0.0f,  0.0f, 1.0f,
+		 0.5f,  0.5f,  0.5f,  1.0f,  0.0f,  0.0f,  1.0f, 0.0f,
+		 0.5f, -0.5f,  0.5f,  1.0f,  0.0f,  0.0f,  0.0f, 0.0f,
+		 // 아래
+		 -0.5f, -0.5f, -0.5f,  0.0f, -1.0f,  0.0f,  0.0f, 1.0f,
+		  0.5f, -0.5f, -0.5f,  0.0f, -1.0f,  0.0f,  1.0f, 1.0f,
+		  0.5f, -0.5f,  0.5f,  0.0f, -1.0f,  0.0f,  1.0f, 0.0f,
+		  0.5f, -0.5f,  0.5f,  0.0f, -1.0f,  0.0f,  1.0f, 0.0f,
+		 -0.5f, -0.5f,  0.5f,  0.0f, -1.0f,  0.0f,  0.0f, 0.0f,
+		 -0.5f, -0.5f, -0.5f,  0.0f, -1.0f,  0.0f,  0.0f, 1.0f,
+		 // 위
+		 -0.5f,  0.5f, -0.5f,  0.0f,  1.0f,  0.0f,  0.0f, 1.0f,
+		  0.5f,  0.5f,  0.5f,  0.0f,  1.0f,  0.0f,  1.0f, 0.0f,
+		  0.5f,  0.5f, -0.5f,  0.0f,  1.0f,  0.0f,  1.0f, 1.0f,
+		  0.5f,  0.5f,  0.5f,  0.0f,  1.0f,  0.0f,  1.0f, 0.0f,
+		 -0.5f,  0.5f, -0.5f,  0.0f,  1.0f,  0.0f,  0.0f, 1.0f,
+		 -0.5f,  0.5f,  0.5f,  0.0f,  1.0f,  0.0f,  0.0f, 0.0f
+	};
+	
+	if (tVAO == 0) {
+		glGenVertexArrays(1, &tVAO);
+		glGenBuffers(1, &tVBO);
+		glBindVertexArray(tVAO);
+		glBindBuffer(GL_ARRAY_BUFFER, tVBO);
+		glBufferData(GL_ARRAY_BUFFER, sizeof(texCubeVertices), texCubeVertices, GL_STATIC_DRAW);
+
+		// 0: 위치 (3개)
+		glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)0);
+		glEnableVertexAttribArray(0);
+		// 1: 법선 (3개) - 기존 Vertex Shader location 2번(Normal)에 맞추기 위해 조절 필요할 수 있음
+		// 사용자 파일 기준: location 1=Color, 2=Normal 일수도 있음.
+		// acting3_vertex.glsl 확인 결과: 0=Pos, 1=Color, 2=Normal 이었으나, 
+		// 텍스처 매핑을 위해 Shader를 수정해야 함. (아래 3단계 참조)
+
+		// **[중요]** 쉐이더 location 수정에 맞춰서 연결
+		// 0: Pos, 1: Normal, 2: TexCoord 로 통일합니다.
+		glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(3 * sizeof(float)));
+		glEnableVertexAttribArray(1);
+
+		glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void*)(6 * sizeof(float)));
+		glEnableVertexAttribArray(2);
+	}
+
+	glBindVertexArray(tVAO);
+
+	// 모델 행렬 전송
+	modelMat = glm::scale(modelMat, scale);
+	glUniformMatrix4fv(glGetUniformLocation(shaderID, "model"), 1, GL_FALSE, glm::value_ptr(modelMat));
+
+	// 텍스처 사용 플래그 켜기
+	glUniform1i(glGetUniformLocation(shaderID, "useTexture"), true);
+
+	// 텍스처 바인딩
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, g_wallTextureID);
+	glUniform1i(glGetUniformLocation(shaderID, "wallTexture"), 0);
+
+	glDrawArrays(GL_TRIANGLES, 0, 36);
+
+	// 텍스처 사용 플래그 끄기 (다른 물체에 영향 안 주게)
+	glUniform1i(glGetUniformLocation(shaderID, "useTexture"), false);
+
+	glBindVertexArray(0);
 }
 
 void make_vertexShaders()
@@ -316,15 +444,15 @@ void DrawCube(glm::mat4 modelMat, glm::vec3 color, glm::vec3 scale)
 	GLuint modelLoc = glGetUniformLocation(shaderProgramID, "model");
 	GLuint viewLoc = glGetUniformLocation(shaderProgramID, "view");
 	GLuint projectionLoc = glGetUniformLocation(shaderProgramID, "projection");
-	GLuint lightPosLoc = glGetUniformLocation(shaderProgramID, "lightPos");
-	GLuint lightColorLoc = glGetUniformLocation(shaderProgramID, "lightColor");
+	//GLuint lightPosLoc = glGetUniformLocation(shaderProgramID, "lightPos");
+	//GLuint lightColorLoc = glGetUniformLocation(shaderProgramID, "lightColor");
 	GLuint viewPosLoc = glGetUniformLocation(shaderProgramID, "viewPos");
 
 	glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(modelMat));
 	glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(viewMat));
 	glUniformMatrix4fv(projectionLoc, 1, GL_FALSE, glm::value_ptr(projectionMat));
-	glUniform3fv(lightPosLoc, 1, glm::value_ptr(lightPos));
-	glUniform3fv(lightColorLoc, 1, glm::value_ptr(lightColor));
+	//glUniform3fv(lightPosLoc, 1, glm::value_ptr(lightPos));
+	//glUniform3fv(lightColorLoc, 1, glm::value_ptr(lightColor));
 	glUniform3fv(viewPosLoc, 1, glm::value_ptr(rotatedCameraPos));
 
 	glDrawArrays(GL_TRIANGLES, 0, 36);
@@ -334,72 +462,65 @@ void DrawCube(glm::mat4 modelMat, glm::vec3 color, glm::vec3 scale)
 	glDeleteVertexArrays(1, &VAO);
 }
 
-// 바닥 그리기
-//void DrawFloor()
-//{
-//	glm::mat4 modelMat = glm::mat4(1.0f);
-//	modelMat = glm::translate(modelMat, glm::vec3(0.0f, -0.7f, 0.0f));
-//	DrawCube(modelMat, glm::vec3(0.8f, 0.9f, 1.0f), glm::vec3(10.0f, 0.1f, 10.0f));
-//}
-
 void DrawSurvivalMap()
 {
-	const int MAP_SIZE = 10; // 맵의 크기를 넓게 설정
+	const int MAP_WIDTH = 5; // 맵의 크기를 넓게 설정
+	const int MAP_LENGTH = 150; // 맵의 길이
+	const int TUNNEL_HEIGHT = 5; // 터널 높이
+
+	// 텍스처 유니폼 위치 가져오기
+	GLuint useTextureLoc = glGetUniformLocation(shaderProgramID, "useTexture");
+
+	// 벽 그리기용 텍스처 바인딩
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, g_wallTextureID); // LoadTexture로 생성한 ID 변수명 확인 필요
 
 	// 바닥을 구성할 작은 사각형(Quad)을 반복문으로 배치합니다.
-	for (int z = -MAP_SIZE * 10 ; z < MAP_SIZE; ++z) {
-		for (int x = -MAP_SIZE/2; x < MAP_SIZE/2; ++x) {
-			glm::mat4 modelMat = glm::mat4(1.0f);
+	for (int z = -10; z < MAP_LENGTH; ++z) {
+		for (int x = -MAP_WIDTH; x < MAP_WIDTH; ++x) {
+			// 1. 바닥 (Floor) 그리기 - [수정] 빨간 발판 조건문 제거
+			glm::mat4 modelFloor = glm::translate(glm::mat4(1.0f), glm::vec3(x * 1.0f, -1.0f, z * 1.0f));
 
-			// 바닥 위치 설정 (y=-1.0f 높이에 배치)
-			modelMat = glm::translate(modelMat, glm::vec3(x * 1.0f + 0.5f, -1.0f, z * 1.0f + 0.5f));
+			DrawTexturedCube(shaderProgramID, modelFloor, glm::vec3(1.5f, 0.1f, 1.0f));
 
-			// 색상 패턴: 체크무늬 (어두운 회색 계열)
-			glm::vec3 blockColor;
-			if ((abs(x) + abs(z)) % 2 == 0)
-				blockColor = glm::vec3(0.3f, 0.3f, 0.3f); // 어두운 색
-			else
-				blockColor = glm::vec3(0.5f, 0.5f, 0.5f); // 밝은 색
+			// 벽 그리기
+			// 3. 양옆 벽 (Walls) 그리기
+			if (abs(x) == MAP_WIDTH) {
+				float wallH = (float)TUNNEL_HEIGHT + 1.0f;
+				float wallY = (wallH / 2.0f) - 1.0f;
 
-			// 블럭 그리기 (크기는 1.0 x 0.01 x 1.0의 아주 납작한 사각형)
-			DrawCube(modelMat, blockColor, glm::vec3(1.0f, 0.01f, 1.0f));
+				glm::mat4 modelWall = glm::translate(glm::mat4(1.0f), glm::vec3(x * 1.0f, wallY, z * 1.0f));
+				glm::mat4 modelWall2 = glm::translate(glm::mat4(1.0f), glm::vec3(-x * 1.0f, wallY, z * 1.0f));
+
+				glUniform1i(useTextureLoc, true);
+
+				DrawTexturedCube(shaderProgramID, modelWall, glm::vec3(0.5f, wallH, 1.0f));
+				DrawTexturedCube(shaderProgramID, modelWall2, glm::vec3(0.5f, wallH, 1.0f));
+			}
 		}
 	}
-
-	// 이전에 추가했던 배경 장식 (Floating Cubes) 코드는 삭제 또는 주석 처리되었습니다.
+	glUniform1i(useTextureLoc, false);
 }
 
-// 좌표축 그리기
-void DrawAxes()
+GLvoid drawScene()
 {
-	GLfloat axes[] = {
-		-3.0f, 0.0f, 0.0f,   3.0f, 0.0f, 0.0f,  // X축
-		 0.0f,-3.0f, 0.0f,   0.0f, 3.0f, 0.0f,  // Y축
-		 0.0f, 0.0f,-3.0f,   0.0f, 0.0f, 3.0f   // Z축
-	};
+	glClearColor(0.1f, 0.1f, 0.15f, 1.0f);
+	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+	glEnable(GL_DEPTH_TEST);
+	glUseProgram(shaderProgramID);
 
-	GLfloat axesColors[] = {
-		1.0f, 0.0f, 0.0f,   1.0f, 0.0f, 0.0f,  // 빨강
-		0.0f, 1.0f, 0.0f,   0.0f, 1.0f, 0.0f,  // 초록
-		0.0f, 0.0f, 1.0f,   0.0f, 0.0f, 1.0f   // 파랑
-	};
-
-	GLuint VAO, VBO, colorVBO;
-	glGenVertexArrays(1, &VAO);
-	glGenBuffers(1, &VBO);
-	glGenBuffers(1, &colorVBO);
-
-	glBindVertexArray(VAO);
-
-	glBindBuffer(GL_ARRAY_BUFFER, VBO);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(axes), axes, GL_STATIC_DRAW);
-	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(GLfloat), (GLvoid*)0);
-	glEnableVertexAttribArray(0);
-
-	glBindBuffer(GL_ARRAY_BUFFER, colorVBO);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(axesColors), axesColors, GL_STATIC_DRAW);
-	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(GLfloat), (GLvoid*)0);
-	glEnableVertexAttribArray(1);
+	// 캐릭터의 현재 위치 가져오기
+	glm::vec3 characterPos = Character::getPosition();
+	// 목표 카메라 위치 계산
+	glm::vec3 cameraGoalPos = glm::vec3(
+		characterPos.x + CAMERA_SIDE_OFFSET,      // 캐릭터 옆쪽
+		characterPos.y + CAMERA_HEIGHT,           // 캐릭터 위에서
+		characterPos.z - CAMERA_BACK_DISTANCE     // 캐릭터 뒤쪽
+	);
+	// 카메라 위치를 부드럽게 이동 (선형 보간)
+	cameraPos.x = cameraPos.x + (cameraGoalPos.x - cameraPos.x) * CAMERA_FOLLOW_SPEED;
+	cameraPos.y = cameraPos.y + (cameraGoalPos.y - cameraPos.y) * CAMERA_FOLLOW_SPEED;
+	cameraPos.z = cameraPos.z + (cameraGoalPos.z - cameraPos.z) * CAMERA_FOLLOW_SPEED;
 
 	// 카메라 회전 적용
 	glm::vec3 rotatedCameraPos = cameraPos;
@@ -419,46 +540,26 @@ void DrawAxes()
 	glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
 	glUniformMatrix4fv(projectionLoc, 1, GL_FALSE, glm::value_ptr(projection));
 
-	glDrawArrays(GL_LINES, 0, 6);
+	// 조명 위치와 색상 설정
+	glm::vec3 lightPos = glm::vec3(characterPos.x, characterPos.y + 5.0f, characterPos.z - 0.5f);
+	glm::vec3 lightColor = glm::vec3(1.0f, 1.0f, 1.0f);
 
-	glDeleteBuffers(1, &VBO);
-	glDeleteBuffers(1, &colorVBO);
-	glDeleteVertexArrays(1, &VAO);
-}
-
-GLvoid drawScene()
-{
-	glClearColor(0.1f, 0.1f, 0.15f, 1.0f);
-	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-	glEnable(GL_DEPTH_TEST);
-	glUseProgram(shaderProgramID);
-
-	// 캐릭터의 현재 위치 가져오기
-	glm::vec3 characterPos = Character::getPosition();
-	
-	// 테일즈런너 스타일 카메라: 측면 상단에서 비스듬하게 봄
-	// 목표 카메라 위치 계산
-	glm::vec3 cameraGoalPos = glm::vec3(
-		characterPos.x + CAMERA_SIDE_OFFSET,      // 캐릭터 옆쪽
-		characterPos.y + CAMERA_HEIGHT,           // 캐릭터 위에서
-		characterPos.z + CAMERA_BACK_DISTANCE     // 캐릭터 뒤쪽
-	);
-	
-	// 카메라 위치를 부드럽게 이동 (선형 보간)
-	cameraPos.x = cameraPos.x + (cameraGoalPos.x - cameraPos.x) * CAMERA_FOLLOW_SPEED;
-	cameraPos.y = cameraPos.y + (cameraGoalPos.y - cameraPos.y) * CAMERA_FOLLOW_SPEED;
-	cameraPos.z = cameraPos.z + (cameraGoalPos.z - cameraPos.z) * CAMERA_FOLLOW_SPEED;
+	GLuint lightPosLoc = glGetUniformLocation(shaderProgramID, "lightPos");
+	GLuint lightColorLoc = glGetUniformLocation(shaderProgramID, "lightColor");
+	glUniform3fv(lightPosLoc, 1, glm::value_ptr(lightPos));
+	glUniform3fv(lightColorLoc, 1, glm::value_ptr(lightColor));
 	
 	// 카메라가 바라보는 지점: 캐릭터 중심 약간 위
 	cameraTarget.x = characterPos.x;
 	cameraTarget.y = characterPos.y + CAMERA_TARGET_HEIGHT;
 	cameraTarget.z = characterPos.z;
 
-	DrawAxes();
-	//DrawFloor();
+	//DrawAxes();
 	DrawSurvivalMap();
 	Character::drawCharacter();
 
+	glDeleteBuffers(1, &VBO);
+	glDeleteVertexArrays(1, &VAO);
 	glutSwapBuffers();
 }
 
@@ -480,6 +581,10 @@ GLvoid timer(int value)
 		bool moveLeft = specialKeyStates[GLUT_KEY_LEFT];
 		bool moveRight = specialKeyStates[GLUT_KEY_RIGHT];
 
+		bool ismoving = moveUp or moveDown or moveLeft or moveRight;
+
+		Character::setRunning(ismoving);
+
 		// 상하좌우 이동
 		if (moveUp) {
 			Character::moveForward(moveSpeed);
@@ -494,38 +599,33 @@ GLvoid timer(int value)
 			Character::moveRight(moveSpeed);
 		}
 
-		// 방향키 입력 시에만 회전 (그 방향을 정면으로)
 		if (moveUp && moveRight) {
-			// 오른쪽 앞 45도
-			Character::setTargetRotation(glm::radians(45.0f));
+			Character::setTargetRotation(glm::radians(-45.0f)); 
 		}
 		else if (moveUp && moveLeft) {
-			// 왼쪽 앞 45도
-			Character::setTargetRotation(glm::radians(315.0f));
+			Character::setTargetRotation(glm::radians(45.0f)); 
 		}
 		else if (moveDown && moveRight) {
-			// 오른쪽 뒤 135도
-			Character::setTargetRotation(glm::radians(135.0f));
+			Character::setTargetRotation(glm::radians(-135.0f)); 
 		}
 		else if (moveDown && moveLeft) {
-			// 왼쪽 뒤 135도
-			Character::setTargetRotation(glm::radians(225.0f));
+			Character::setTargetRotation(glm::radians(135.0f)); 
 		}
 		else if (moveUp) {
-			// 앞 (0도)
-			Character::setTargetRotation(glm::radians(360.0f));
+			// 정면(+Z)으로 갈 때 0도 (모델이 +Z를 보고 있다고 가정)
+			Character::setTargetRotation(glm::radians(0.0f));
 		}
 		else if (moveDown) {
-			// 뒤 (180도)
+			// 뒤(-Z)로 갈 때 180도
 			Character::setTargetRotation(glm::radians(180.0f));
 		}
 		else if (moveLeft) {
-			// 왼쪽 (-90도)
-			Character::setTargetRotation(glm::radians(270.0f));
+			// 왼쪽(+X) -> 카메라가 뒤집혔으므로 왼쪽 키 누르면 +X 방향
+			Character::setTargetRotation(glm::radians(90.0f));
 		}
 		else if (moveRight) {
-			// 오른쪽 (90도)
-			Character::setTargetRotation(glm::radians(90.0f));
+			// 오른쪽(-X)
+			Character::setTargetRotation(glm::radians(-90.0f));
 		}
 
 		// 스페이스바로 점프 (더블점프 가능)

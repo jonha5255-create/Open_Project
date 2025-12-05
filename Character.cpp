@@ -22,7 +22,7 @@
 struct Vertex {
     float px, py, pz;
     float nx, ny, nz;
-    float u, v;
+	float r, g, b;
 };
 
 static GLuint g_vao = 0;
@@ -58,10 +58,7 @@ static float g_leftLegRotation = 0.0f;
 static float g_rightLegRotation = 0.0f;
 
 // 경계값
-static const float BOUNDARY_X_MIN = -4.5f;
-static const float BOUNDARY_X_MAX = 4.5f;
-static const float BOUNDARY_Z_MIN = -4.5f;
-static const float BOUNDARY_Z_MAX = 4.5f;
+static const float Bondray_Limit = 4.5f;
 
 // 움직임 부드러움 계수 (0~1 사이, 값이 작을수록 더 부드러움)
 static const float MOVEMENT_SMOOTHING = 0.15f;
@@ -353,9 +350,10 @@ bool Character::initCharacter(const char* objPath, GLuint shaderProg) {
     glEnableVertexAttribArray(0);
     glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, px));
     glEnableVertexAttribArray(1);
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, nx));
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, r));
     glEnableVertexAttribArray(2);
-    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, u));
+    glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, nx));
+    
 
     glBindVertexArray(0);
 
@@ -376,19 +374,46 @@ bool Character::initCharacter(const char* objPath, GLuint shaderProg) {
 }
 
 void Character::moveForward(float speed) {
-    g_targetPosition.z -= speed;
-}
-
-void Character::moveBackward(float speed) {
+    if (g_playerStun.isStunned) return;
     g_targetPosition.z += speed;
 }
 
+void Character::moveBackward(float speed) {
+    if (g_playerStun.isStunned) return;
+    if (g_targetPosition.z > -5.0f) {
+        g_targetPosition.z -= speed;
+
+        if (g_targetPosition.z < -5.0f) {
+            g_targetPosition.z = -5.0f;
+        }
+    }
+    
+}
+
 void Character::moveLeft(float speed) {
-    g_targetPosition.x -= speed;
+    if (g_playerStun.isStunned) return;
+
+    if (g_targetPosition.x < Bondray_Limit) {
+        g_targetPosition.x += speed;
+
+        // 만약 더해서 3.0을 넘으면 3.0으로 고정 (벽에 막힘)
+        if (g_targetPosition.x > Bondray_Limit) {
+            g_targetPosition.x = Bondray_Limit;
+        }
+    }
 }
 
 void Character::moveRight(float speed) {
-    g_targetPosition.x += speed;
+    if (g_playerStun.isStunned) return;
+
+    if (g_targetPosition.x > -Bondray_Limit) {
+        g_targetPosition.x -= speed;
+
+        // 만약 더해서 3.0을 넘으면 3.0으로 고정 (벽에 막힘)
+        if (g_targetPosition.x < -Bondray_Limit) {
+            g_targetPosition.x = -Bondray_Limit;
+        }
+    }
 }
 
 // 변수 추가 (기존 변수들 아래)
@@ -414,6 +439,10 @@ void Character::setTargetRotation(float angle) {
 void Character::drawCharacter() {
     if (g_vao == 0 || g_indexCount == 0) return;
 
+	glUseProgram(g_shaderProg);
+    glBindVertexArray(g_vao);
+
+	// 시간 계산
     auto now = std::chrono::steady_clock::now();
     double dt = std::chrono::duration<double>(now - g_lastTime).count();
     g_lastTime = now;
@@ -429,15 +458,28 @@ void Character::drawCharacter() {
         }
     }
 
+    // g_colorUniform 변수가 올바르게 연결되었다면 아래 숫자로 색이 바뀝니다.
+    if (g_colorUniform >= 0) {
+        if (g_playerStun.isStunned) {
+            // 스턴 상태: 빨간색으로 깜빡임
+            float blink = sin((float)g_timeTotal * 20.0f);
+            if (blink > 0) glUniform3f(g_colorUniform, 1.0f, 0.0f, 0.0f); // 빨강
+            else glUniform3f(g_colorUniform, 1.0f, 1.0f, 0.0f);          // 노랑
+        }
+        else {
+            // 평소 상태: 파란색 (캐릭터 고유색)
+            // 바닥 색과 분리하기 위해 여기서 확실하게 파란색을 넣어줍니다.
+            glUniform3f(g_colorUniform, 0.2f, 0.6f, 1.0f);
+        }
+    }
+
     // 현재 위치를 목표 위치로 부드럽게 이동
     g_position.x = lerp(g_position.x, g_targetPosition.x, MOVEMENT_SMOOTHING);
     g_position.z = lerp(g_position.z, g_targetPosition.z, MOVEMENT_SMOOTHING);
 
-    // 회전 부드럽게 적용
+    // 회전할때 보는 각도 설정
     const float PI = 3.14159265f;
     float diff = g_targetYaw - g_yaw;
-
-    // 차이가 -PI ~ PI (-180도 ~ 180도) 사이가 되도록 보정
     while (diff > PI) diff -= 2 * PI;
     while (diff < -PI) diff += 2 * PI;
 
@@ -471,32 +513,117 @@ void Character::drawCharacter() {
     }
 
     // 로봇 팔다리 애니메이션 (걷기 동작)
-    float walkAnimSpeed = 6.0f;
-    g_leftArmRotation = sinf((float)g_timeTotal * walkAnimSpeed) * 0.5f;
-    g_rightArmRotation = -sinf((float)g_timeTotal * walkAnimSpeed) * 0.5f;
-    g_leftLegRotation = sinf((float)g_timeTotal * walkAnimSpeed + 3.14159f) * 0.4f;
-    g_rightLegRotation = -sinf((float)g_timeTotal * walkAnimSpeed + 3.14159f) * 0.4f;
-
-    float bobOffset = 0.0f;
-
-    float R[16]; mat4_rotate_y(R, g_yaw);
-    float T[16]; mat4_translate(T, g_position.x, g_position.y + bobOffset, g_position.z);
-    float S[16]; mat4_scale(S, 1.0f, 1.0f, 1.0f);
-    float TR[16]; mat4_mul(T, R, TR);
-    float TRS[16]; mat4_mul(TR, S, TRS);
-
-    if (g_modelUniform >= 0) {
-        glUseProgram(g_shaderProg);
-        glUniformMatrix4fv(g_modelUniform, 1, GL_FALSE, TRS);
+    float walkAnimSpeed = 10.0f;
+    float swingAngle = 0.0f;
+    if (g_running || !g_grounded) {
+        swingAngle = sinf((float)g_timeTotal * walkAnimSpeed);
     }
+    // 팔다리 회전을 위한 렌더링
+    float armRot = swingAngle * 0.8f;
+    float legRot = swingAngle * 0.6f;
 
-    if (g_colorUniform >= 0) {
-        glUniform3f(g_colorUniform, 0.2f, 0.7f, 0.9f);
-    }
-
+    glUseProgram(g_shaderProg);
     glBindVertexArray(g_vao);
-    glDrawElements(GL_TRIANGLES, g_indexCount, GL_UNSIGNED_INT, 0);
+   
+
+    // 기본 행렬 (몸통 기준)
+    glm::mat4 rootModel = glm::mat4(1.0f);
+    rootModel = glm::translate(rootModel, g_position);
+    rootModel = glm::rotate(rootModel, g_yaw, glm::vec3(0.0f, 1.0f, 0.0f));
+
+    // [1] 몸통 그리기 (인덱스 0~36)
+    if (g_modelUniform >= 0)
+        glUniformMatrix4fv(g_modelUniform, 1, GL_FALSE, glm::value_ptr(rootModel));
+
+    glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, (void*)(0 * sizeof(unsigned int)));
+
+
+    // [2] 머리 그리기 (인덱스 36~72)
+    // 머리는 몸통과 같은 행렬을 쓰되 약간의 위치 차이가 obj에 포함됨
+    if (g_modelUniform >= 0)
+        glUniformMatrix4fv(g_modelUniform, 1, GL_FALSE, glm::value_ptr(rootModel));
+
+    glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, (void*)(36 * sizeof(unsigned int)));
+
+
+    // 피벗 포인트 (회전축)
+    glm::vec3 shoulderL(-0.3f, 0.9f, 0.0f);
+    glm::vec3 shoulderR(0.3f, 0.9f, 0.0f);
+    glm::vec3 hipL(-0.13f, 0.1f, 0.0f);
+    glm::vec3 hipR(0.13f, 0.1f, 0.0f);
+
+
+    // [3] 왼쪽 팔 통째로 그리기 (상박 + 하박)
+    {
+        glm::mat4 lArmMat = rootModel;
+        lArmMat = glm::translate(lArmMat, shoulderL);              // 1. 어깨 위치로 이동
+        lArmMat = glm::rotate(lArmMat, armRot, glm::vec3(1, 0, 0));  // 2. 회전
+        lArmMat = glm::translate(lArmMat, -shoulderL);             // 3. 다시 원점으로
+
+        // 행렬 전송
+        if (g_modelUniform >= 0)
+            glUniformMatrix4fv(g_modelUniform, 1, GL_FALSE, glm::value_ptr(lArmMat));
+
+        // 상박 그리기 (인덱스 72번부터 36개)
+        glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, (void*)(72 * sizeof(unsigned int)));
+        // 하박 그리기 (인덱스 144번부터 36개) - 같은 행렬을 쓰므로 붙어 다님
+        glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, (void*)(144 * sizeof(unsigned int)));
+    }
+
+
+    // [4] 오른쪽 팔 통째로 그리기
+    {
+        glm::mat4 rArmMat = rootModel;
+        rArmMat = glm::translate(rArmMat, shoulderR);
+        rArmMat = glm::rotate(rArmMat, -armRot, glm::vec3(1, 0, 0)); // 반대로 회전
+        rArmMat = glm::translate(rArmMat, -shoulderR);
+
+        if (g_modelUniform >= 0)
+            glUniformMatrix4fv(g_modelUniform, 1, GL_FALSE, glm::value_ptr(rArmMat));
+
+        // 상박 (108번부터)
+        glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, (void*)(108 * sizeof(unsigned int)));
+        // 하박 (180번부터)
+        glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, (void*)(180 * sizeof(unsigned int)));
+    }
+
+
+    // [5] 왼쪽 다리 통째로 그리기
+    {
+        glm::mat4 lLegMat = rootModel;
+        lLegMat = glm::translate(lLegMat, hipL);
+        lLegMat = glm::rotate(lLegMat, -legRot, glm::vec3(1, 0, 0));
+        lLegMat = glm::translate(lLegMat, -hipL);
+
+        if (g_modelUniform >= 0)
+            glUniformMatrix4fv(g_modelUniform, 1, GL_FALSE, glm::value_ptr(lLegMat));
+
+        // 허벅지 (216번부터)
+        glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, (void*)(216 * sizeof(unsigned int)));
+        // 종아리 (288번부터)
+        glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, (void*)(288 * sizeof(unsigned int)));
+    }
+
+
+    // [6] 오른쪽 다리 통째로 그리기
+    {
+        glm::mat4 rLegMat = rootModel;
+        rLegMat = glm::translate(rLegMat, hipR);
+        rLegMat = glm::rotate(rLegMat, legRot, glm::vec3(1, 0, 0));
+        rLegMat = glm::translate(rLegMat, -hipR);
+
+        if (g_modelUniform >= 0)
+            glUniformMatrix4fv(g_modelUniform, 1, GL_FALSE, glm::value_ptr(rLegMat));
+
+        // 허벅지 (252번부터)
+        glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, (void*)(252 * sizeof(unsigned int)));
+        // 종아리 (324번부터)
+        glDrawElements(GL_TRIANGLES, 36, GL_UNSIGNED_INT, (void*)(324 * sizeof(unsigned int)));
+    }
+
     glBindVertexArray(0);
+
+	printf("로봇 위치: (%.2f, %.2f, %.2f), 회전: %.2f도\n", g_position.x, g_position.y, g_position.z, g_yaw* (180.0f / 3.14159265f));
 
     Enemy::updateOctopus(g_position, (float)dt);
     Enemy::drawOctopus();
@@ -521,3 +648,6 @@ glm::vec3 Character::getPosition() {
     return g_position;
 }
 
+void Character::setRunning(bool running) {
+    g_running = running;
+}
