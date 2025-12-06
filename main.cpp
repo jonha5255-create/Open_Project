@@ -7,6 +7,8 @@
 #include <time.h>
 #include <algorithm>
 #include <vector>
+#include <chrono>
+#include <cstdio>
 
 #include <gl/glew.h>
 #include <gl/freeglut.h>
@@ -19,6 +21,7 @@
 #include "character.h"
 #include "octopus.h"
 #include "stb_image.h"
+#include "UI_manager.h"
 
 #define MAX_LINE_LENGTH 256
 
@@ -53,7 +56,8 @@ GLvoid timer(int value);
 
 
 GLint width, height;
-GLuint shaderProgramID, g_wallTextureID;
+GLuint shaderProgramID, g_wallTextureID, g_titleTextureID;
+GLuint LoadTexture(const char* filename);
 GLuint vertexShader;
 GLuint fragmentShader;
 GLuint tVAO = 0, tVBO = 0;
@@ -72,15 +76,23 @@ float cameraOrbitRadius = 5.0f;
 
 // 카메라 설정 상수
 static const float CAMERA_SIDE_OFFSET = 0.0f;   // 캐릭터 옆쪽 오프셋 (좌우)
-static const float CAMERA_BACK_DISTANCE = 4.5f; // 캐릭터 뒤쪽 거리
-static const float CAMERA_HEIGHT = 2.5f;        // 캐릭터 위의 높이
-static const float CAMERA_FOLLOW_SPEED = 0.12f; // 카메라 따라가는 속도 (부드러움)
-static const float CAMERA_TARGET_HEIGHT = 0.8f; // 카메라가 바라보는 높이
+static const float CAMERA_BACK_DISTANCE = 7.0f; // 캐릭터 뒤쪽 거리
+static const float CAMERA_HEIGHT = 5.5f;        // 캐릭터 위의 높이
+static const float CAMERA_FOLLOW_SPEED = 0.2f; // 카메라 따라가는 속도 (부드러움)
+static const float CAMERA_TARGET_HEIGHT = 0.0f; // 카메라가 바라보는 높이
 
 // 애니메이션 제어
 bool cameraOrbitAnimation = false;         // 카메라 공전 애니메이션
 bool allAnimationsStopped = false;         // 모든 움직임 정지
 
+// 게임 상태 변수
+enum GameState { TITLE, READY, PLAYING, FINISHED};
+GameState g_gameState = TITLE;
+float g_totalDistance = 800.0f; // 목표 거리
+float g_currentDistance = 0.0f; // 현재 이동 거리
+float g_readyTime = 4.0f;    // 준비 시간
+float g_startTime = 0.0;      // 게임 시작 시간
+std::chrono::steady_clock::time_point lastTime;
 
 void InitBuffer();
 void UpdateCameraPosition();
@@ -96,13 +108,13 @@ static bool specialKeyStates[SPECIAL_KEY_OFFSET] = {false};
 
 void main(int argc, char** argv)
 {
-	width = 800;
+	width = 1200;
 	height = 800;
 	glutInit(&argc, argv);
 	glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGBA | GLUT_DEPTH);
 	glutInitWindowPosition(100, 100);
 	glutInitWindowSize(width, height);
-	glutCreateWindow("Character Model - Act 20");
+	glutCreateWindow("project - Runner");
 	glewExperimental = GL_TRUE;
 	glewInit();
 
@@ -117,7 +129,19 @@ void main(int argc, char** argv)
 		std::cerr << "캐릭터 초기화 실패" << std::endl;
 		exit(1);
 	}
-	InitTexture("MAP_WALL.jpg");
+	// [추가] 타이틀 이미지 로드 (파일명을 'title.jpg'로 맞춰주세요)
+	g_titleTextureID = LoadTexture("title.jpg");
+
+	// 벽 텍스처도 LoadTexture로 통일해서 로드 가능
+	g_wallTextureID = LoadTexture("MAP_WALL.jpg");
+
+	if (!Enemy::initOctopus("Octopus_1.obj", shaderProgramID)) {
+		std::cerr << "문어 초기화 실패" << std::endl;
+		exit(1);
+	}
+	
+	UIManager::Init();
+	lastTime = std::chrono::steady_clock::now();
 
 
 	glutDisplayFunc(drawScene);
@@ -132,42 +156,38 @@ void main(int argc, char** argv)
 
 	std::cout << "=== 캐릭터 조작법 ===" << std::endl;
 	std::cout << "방향키: 캐릭터 XZ 평면 이동" << std::endl;
-	std::cout << "W/A/S/D: 앞/왼/뒤/오른쪽 이동" << std::endl;
-	std::cout << "\n=== 카메라 조작법 ===" << std::endl;
-	std::cout << "Z/X: 카메라 Z축 이동" << std::endl;
-	std::cout << "Y: 카메라 Y축 자전" << std::endl;
-	std::cout << "o: 모든 움직임 멈추기/재개" << std::endl;
-	std::cout << "c: 초기화" << std::endl;
 	std::cout << "q: 종료" << std::endl;
 
 	glutMainLoop();
 }
 
-// 1. 텍스처 파일 로드 함수 (PDF 방식 적용)
-void InitTexture(const char* filename) {
-	glGenTextures(1, &g_wallTextureID);
-	glBindTexture(GL_TEXTURE_2D, g_wallTextureID);
+// 1. 텍스처 파일 로드 함수
+GLuint LoadTexture(const char* filename) {
+	GLuint textureID;
+	glGenTextures(1, &textureID);
+	glBindTexture(GL_TEXTURE_2D, textureID);
 
-	// 텍스처 파라미터 설정 (반복, 선형 보간)
+	// 텍스처 반복 및 필터링 설정
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 
-	// 이미지 로드
-	int width, height, nrChannels;
-	stbi_set_flip_vertically_on_load(true); // 이미지 뒤집힘 방지
-	unsigned char* data = stbi_load(filename, &width, &height, &nrChannels, 0);
+	int w, h, nrChannels;
+	stbi_set_flip_vertically_on_load(true); // OpenGL 좌표계에 맞춰 상하 반전
+	unsigned char* data = stbi_load(filename, &w, &h, &nrChannels, 0);
 
 	if (data) {
 		GLenum format = (nrChannels == 4) ? GL_RGBA : GL_RGB;
-		glTexImage2D(GL_TEXTURE_2D, 0, format, width, height, 0, format, GL_UNSIGNED_BYTE, data);
+		glTexImage2D(GL_TEXTURE_2D, 0, format, w, h, 0, format, GL_UNSIGNED_BYTE, data);
 		glGenerateMipmap(GL_TEXTURE_2D);
+		std::cout << "텍스처 로드 성공: " << filename << std::endl;
 	}
 	else {
 		std::cout << "텍스처 로드 실패: " << filename << std::endl;
 	}
 	stbi_image_free(data);
+	return textureID;
 }
 
 // 2. 텍스처가 적용된 큐브 그리기 함수 (새로 만듦)
@@ -464,27 +484,33 @@ void DrawCube(glm::mat4 modelMat, glm::vec3 color, glm::vec3 scale)
 
 void DrawSurvivalMap()
 {
-	const int MAP_WIDTH = 5; // 맵의 크기를 넓게 설정
-	const int MAP_LENGTH = 150; // 맵의 길이
-	const int TUNNEL_HEIGHT = 5; // 터널 높이
+	const int MAP_WIDTH = 5;
+	const int TUNNEL_HEIGHT = 5;
 
-	// 텍스처 유니폼 위치 가져오기
 	GLuint useTextureLoc = glGetUniformLocation(shaderProgramID, "useTexture");
 
-	// 벽 그리기용 텍스처 바인딩
+	// 텍스처 바인딩을 루프 밖으로 빼서 성능 최적화 (DrawTexturedCube 내부의 바인딩과 중복되지만, 상태 변경 비용을 줄임)
 	glActiveTexture(GL_TEXTURE0);
-	glBindTexture(GL_TEXTURE_2D, g_wallTextureID); // LoadTexture로 생성한 ID 변수명 확인 필요
+	glBindTexture(GL_TEXTURE_2D, g_wallTextureID);
 
-	// 바닥을 구성할 작은 사각형(Quad)을 반복문으로 배치합니다.
-	for (int z = -10; z < MAP_LENGTH; ++z) {
+	// [최적화 핵심] 전체 맵(0~500)을 다 그리지 않고, 캐릭터 위치 기준 앞뒤 일정 거리만 그립니다.
+	// 캐릭터 위치 가져오기
+	float characterZ = Character::getPosition().z;
+	// 시야 범위 설정
+	float startZ = characterZ - 10.0f; // 캐릭터 뒤쪽 10m
+
+	float endZ = characterZ + 50.0f; // 캐릭터 앞쪽 50m
+	if (endZ > 800.0f) endZ = 800.0f;
+
+
+	// 반복문 범위를 startZ ~ endZ로 변경
+	for (float z = -10; z < 800; z += 1.0f) {
 		for (int x = -MAP_WIDTH; x < MAP_WIDTH; ++x) {
-			// 1. 바닥 (Floor) 그리기 - [수정] 빨간 발판 조건문 제거
+			// 1. 바닥 (Floor)
 			glm::mat4 modelFloor = glm::translate(glm::mat4(1.0f), glm::vec3(x * 1.0f, -1.0f, z * 1.0f));
-
 			DrawTexturedCube(shaderProgramID, modelFloor, glm::vec3(1.5f, 0.1f, 1.0f));
 
-			// 벽 그리기
-			// 3. 양옆 벽 (Walls) 그리기
+			// 2. 양옆 벽 (Walls)
 			if (abs(x) == MAP_WIDTH) {
 				float wallH = (float)TUNNEL_HEIGHT + 1.0f;
 				float wallY = (wallH / 2.0f) - 1.0f;
@@ -494,16 +520,65 @@ void DrawSurvivalMap()
 
 				glUniform1i(useTextureLoc, true);
 
+				// 기존 DrawTexturedCube 함수를 그대로 쓴다면 이대로 호출해도 횟수가 줄어들어 빨라집니다.
 				DrawTexturedCube(shaderProgramID, modelWall, glm::vec3(0.5f, wallH, 1.0f));
 				DrawTexturedCube(shaderProgramID, modelWall2, glm::vec3(0.5f, wallH, 1.0f));
 			}
 		}
 	}
+
+	// 골인 지점은 멀리 있어도 보여야 한다면 별도로 그리거나, 시야 범위 내에 들어왔을 때 그려집니다.
+	// 만약 항상 보이게 하고 싶다면 조건 없이 그립니다.
+	if (endZ >= g_totalDistance - 10.0f) { // 골인 지점이 시야에 들어오면 그리기
+		glm::mat4 goalModel = glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.1f, g_totalDistance - 5.0f));
+		DrawTexturedCube(shaderProgramID, goalModel, glm::vec3(MAP_WIDTH * 2.5f, 0.1f, 1.0f));
+	}
+
 	glUniform1i(useTextureLoc, false);
 }
 
 GLvoid drawScene()
 {
+	// 타임 시작 함수
+	auto now = std::chrono::steady_clock::now();
+	float dt = std::chrono::duration<float>(now - lastTime).count();
+	lastTime = now;
+	if (dt > 0.1f) dt = 0.1f;
+
+	if (g_gameState == TITLE) {
+		glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+		// UI 매니저를 통해 배경 이미지 그리기
+		UIManager::DrawTitleScreen(width, height, g_titleTextureID);
+
+		glutSwapBuffers();
+		return; // 게임 화면 그리지 않고 리턴
+	}
+
+	if (g_gameState == READY) {
+		g_readyTime -= dt;
+		if (g_readyTime <= 0.0f) {
+			g_gameState = PLAYING;
+			g_startTime = 0.0f;
+		}
+	}
+	else if (g_gameState == PLAYING) {
+		g_startTime += dt;
+		if (Character::getPosition().z >= g_totalDistance) 
+			g_gameState = FINISHED;
+	}
+	else if (g_gameState == FINISHED) {
+		glClearColor(0.0f, 0.0f, 0.0f, 1.0f);
+		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+		// 결과 화면 그리기 (현재 g_startTime이 최종 기록이 됨)
+		UIManager::DrawFinishScreen(width, height, g_titleTextureID, g_startTime);
+
+		glutSwapBuffers();
+		return; 
+	}
+
 	glClearColor(0.1f, 0.1f, 0.15f, 1.0f);
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 	glEnable(GL_DEPTH_TEST);
@@ -513,7 +588,7 @@ GLvoid drawScene()
 	glm::vec3 characterPos = Character::getPosition();
 	// 목표 카메라 위치 계산
 	glm::vec3 cameraGoalPos = glm::vec3(
-		characterPos.x + CAMERA_SIDE_OFFSET,      // 캐릭터 옆쪽
+		0.0f,      // 캐릭터 옆쪽
 		characterPos.y + CAMERA_HEIGHT,           // 캐릭터 위에서
 		characterPos.z - CAMERA_BACK_DISTANCE     // 캐릭터 뒤쪽
 	);
@@ -550,16 +625,70 @@ GLvoid drawScene()
 	glUniform3fv(lightColorLoc, 1, glm::value_ptr(lightColor));
 	
 	// 카메라가 바라보는 지점: 캐릭터 중심 약간 위
-	cameraTarget.x = characterPos.x;
+	cameraTarget.x = 0.0f;
 	cameraTarget.y = characterPos.y + CAMERA_TARGET_HEIGHT;
-	cameraTarget.z = characterPos.z;
+	cameraTarget.z = characterPos.z + CAMERA_BACK_DISTANCE;
 
-	//DrawAxes();
 	DrawSurvivalMap();
 	Character::drawCharacter();
+	// [추가] 문어 및 전기 업데이트 (게임 중일 때만)
+	if (g_gameState == PLAYING) {
+		Enemy::updateOctopus(characterPos, dt);
+		PlayerStun stunInfo = { false, 0.0f, 0.0f };
+		if (Enemy::checkElectricityCollision(characterPos, 0.5f, stunInfo)) {
+			Character::applyStun(stunInfo.stunDuration);
+		}
+		Enemy::drawOctopus();
+		Enemy::drawElectricity();
+	}
+	
 
-	glDeleteBuffers(1, &VBO);
-	glDeleteVertexArrays(1, &VAO);
+	// ==========================================
+	// 2. 캐릭터 초상화 (왼쪽 하단 작은 화면)
+	// ==========================================
+	int charViewSize = 150;
+	// [수정] 화면 높이의 정중앙에 위치하도록 Y좌표 계산
+	int viewY = (height - charViewSize) / 2;
+
+	// 뷰포트 설정 (X=20, Y=중앙)
+	glViewport(20, viewY, charViewSize, charViewSize);
+	glClear(GL_DEPTH_BUFFER_BIT); // 깊이만 지움 (배경 유지)
+
+	// 초상화용 카메라
+	glm::vec3 uiCamPos = characterPos + glm::vec3(0.0f, 0.9f, 1.0f);
+	glm::vec3 uiCamTarget = characterPos + glm::vec3(0.0f, 0.9f, 0.0f);
+
+	glm::mat4 uiView = glm::lookAt(uiCamPos, uiCamTarget, glm::vec3(0, 1, 0));
+
+	glm::mat4 uiProj = glm::ortho(-0.8f, 0.8f, -0.8f, 0.8f, 0.1f, 10.0f);
+
+	glUniformMatrix4fv(glGetUniformLocation(shaderProgramID, "view"), 1, GL_FALSE, glm::value_ptr(uiView));
+	glUniformMatrix4fv(glGetUniformLocation(shaderProgramID, "projection"), 1, GL_FALSE, glm::value_ptr(uiProj));
+	Character::drawCharacter();
+
+	// 뷰포트 원복
+	glViewport(0, 0, width, height);
+
+	// ==========================================
+	// 3. 2D UI 그리기 (타이머, 바, 프레임)
+	// ==========================================
+	std::string timerText;
+	if(g_gameState == READY) {
+		timerText = "READY!";
+	}
+	else if (g_gameState == FINISHED) {
+		timerText = "FINISH!";
+	}
+	else if(g_gameState == PLAYING) {
+		int min = (int)g_startTime / 60;
+		int sec = (int)g_startTime % 60;
+		int ms = (int)((g_startTime - (int)g_startTime) * 100);
+		char buf[20]; sprintf_s(buf, "%02d:%02d:%02d", min, sec, ms);
+		timerText = buf;
+	}
+
+	UIManager::DrawAll(width, height, abs(characterPos.z), g_totalDistance, timerText, Character::isStunned());
+
 	glutSwapBuffers();
 }
 
@@ -572,9 +701,10 @@ GLvoid Reshape(int w, int h)
 
 GLvoid timer(int value)
 {
+	glutTimerFunc(16, timer, 0);
 	const float moveSpeed = 0.15f;
 
-	if (!allAnimationsStopped) {
+	if (g_gameState == PLAYING && !allAnimationsStopped) {
 		// 8방향 입력 처리
 		bool moveUp = specialKeyStates[GLUT_KEY_UP];
 		bool moveDown = specialKeyStates[GLUT_KEY_DOWN];
@@ -634,9 +764,13 @@ GLvoid timer(int value)
 			keyStates[' '] = false;
 		}
 	}
+	glm::vec3 debugPos = Character::getPosition();
+	std::cout << "현재 위치 -> X: " << debugPos.x
+		<< " | Y: " << debugPos.y
+		<< " | Z: " << debugPos.z << std::endl;
 
 	glutPostRedisplay();
-	glutTimerFunc(16, timer, 0);
+	
 }
 
 GLvoid keyboard(unsigned char key, int x, int y)
@@ -647,19 +781,12 @@ GLvoid keyboard(unsigned char key, int x, int y)
 	keyStates[key] = true;
 
 	switch (key) {
-
-	case 'o': case 'O': // 모든 움직임 멈추기
-		allAnimationsStopped = !allAnimationsStopped;
-		std::cout << "모든 움직임: " << (allAnimationsStopped ? "정지" : "재개") << std::endl;
-		break;
-
-	case 'c': case 'C': // 초기화
-		characterPosition = glm::vec3(0.0f, 0.0f, 0.0f);
-		cameraPos = glm::vec3(0.0f, 2.2f, 4.5f);
-		cameraRotationY = 0.0f;
-		cameraOrbitAngle = 45.0f;
-		allAnimationsStopped = false;
-		std::cout << "모든 설정 초기화" << std::endl;
+	case 's':
+		if (g_gameState == TITLE) {
+						// 타이틀 화면에서 's' 누르면 게임 시작
+			g_gameState = READY;
+			g_readyTime = 2.0f; // 2초 대기 후 시작
+		}
 		break;
 
 	case 'q': case 'Q': // 종료

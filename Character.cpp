@@ -41,7 +41,13 @@ static float g_yaw = 0.0f;
 static float g_targetYaw = 0.0f;            // 목표 회전 각도
 static const float ROTATION_SPEED = 0.15f;  // 회전 속도 (부드러움)
 
-static float g_speed = 3.5f;
+// [가속도 시스템 변수 추가]
+static float g_currentSpeed = 0.0f;       // 현재 실제 속도
+static const float MIN_SPEED = 0.0f;      // 정지 상태
+static const float MAX_SPEED = 0.3f;      // 최대 속도 (너무 빠르면 조작 어려움)
+static const float ACCELERATION = 0.025f;   // 가속도 (초당 증가량)
+static const float FRICTION = 3.5f;       // 마찰력 (키 뗐을 때 멈추는 속도)
+
 static bool g_running = false;
 static bool g_jumpRequested = false;
 static float g_verticalVel = 0.0f;
@@ -357,13 +363,14 @@ bool Character::initCharacter(const char* objPath, GLuint shaderProg) {
 
     glBindVertexArray(0);
 
-    g_position = glm::vec3(0.0f, 0.0f, 0.0f);
+    g_position = glm::vec3(0.0f, 20.0f, 0.0f);
     g_targetPosition = glm::vec3(0.0f, 0.0f, 0.0f);
     g_yaw = 0.0f;  // 초기값: 0도 (앞 방향)
     g_targetYaw = 0.0f;  // 목표 회전 각도도 0도로 초기화
     g_running = false;
     g_verticalVel = 0.0f;
-    g_grounded = true;
+    g_grounded = false;
+	g_currentSpeed = 0.0f;
     g_timeTotal = 0.0;
     g_lastTime = std::chrono::steady_clock::now();
     g_playerStun.isStunned = false;
@@ -375,13 +382,13 @@ bool Character::initCharacter(const char* objPath, GLuint shaderProg) {
 
 void Character::moveForward(float speed) {
     if (g_playerStun.isStunned) return;
-    g_targetPosition.z += speed;
+    g_targetPosition.z += g_currentSpeed;
 }
 
 void Character::moveBackward(float speed) {
     if (g_playerStun.isStunned) return;
     if (g_targetPosition.z > -5.0f) {
-        g_targetPosition.z -= speed;
+        g_targetPosition.z -= g_currentSpeed;
 
         if (g_targetPosition.z < -5.0f) {
             g_targetPosition.z = -5.0f;
@@ -394,7 +401,7 @@ void Character::moveLeft(float speed) {
     if (g_playerStun.isStunned) return;
 
     if (g_targetPosition.x < Bondray_Limit) {
-        g_targetPosition.x += speed;
+        g_targetPosition.x += g_currentSpeed;
 
         // 만약 더해서 3.0을 넘으면 3.0으로 고정 (벽에 막힘)
         if (g_targetPosition.x > Bondray_Limit) {
@@ -407,7 +414,7 @@ void Character::moveRight(float speed) {
     if (g_playerStun.isStunned) return;
 
     if (g_targetPosition.x > -Bondray_Limit) {
-        g_targetPosition.x -= speed;
+        g_targetPosition.x -= g_currentSpeed;
 
         // 만약 더해서 3.0을 넘으면 3.0으로 고정 (벽에 막힘)
         if (g_targetPosition.x < -Bondray_Limit) {
@@ -449,9 +456,24 @@ void Character::drawCharacter() {
     if (dt > 0.1) dt = 0.1;
     g_timeTotal += dt;
 
+    // --- [가속도 로직 구현] ---
+    if (g_running && !g_playerStun.isStunned) {
+        // 달리는 중: 속도 증가
+        g_currentSpeed += ACCELERATION * (float)dt;
+        if (g_currentSpeed > MAX_SPEED) g_currentSpeed = MAX_SPEED;
+    }
+    else {
+        // 멈춤/스턴: 속도 감소 (마찰력)
+        g_currentSpeed -= FRICTION * (float)dt;
+        if (g_currentSpeed < 0.0f) g_currentSpeed = 0.0f;
+    }
+
     // 기절 상태 업데이트
     if (g_playerStun.isStunned) {
         g_playerStun.stunTimer += dt;
+		g_currentSpeed = 0.0f;
+		g_jumpCount = 0; 
+        g_jumpRequested = false;
         if (g_playerStun.stunTimer >= g_playerStun.stunDuration) {
             g_playerStun.isStunned = false;
             g_playerStun.stunTimer = 0.0f;
@@ -623,12 +645,8 @@ void Character::drawCharacter() {
 
     glBindVertexArray(0);
 
-	printf("로봇 위치: (%.2f, %.2f, %.2f), 회전: %.2f도\n", g_position.x, g_position.y, g_position.z, g_yaw* (180.0f / 3.14159265f));
-
     Enemy::updateOctopus(g_position, (float)dt);
     Enemy::drawOctopus();
-
-    Enemy::updateElectricity((float)dt);
     Enemy::checkElectricityCollision(g_position, 0.5f, g_playerStun);
     Enemy::drawElectricity();
 }
@@ -641,7 +659,6 @@ void Character::cleanup() {
     g_shaderProg = 0;
     g_modelUniform = -1;
     g_colorUniform = -1;
-    Enemy::cleanup();
 }
 
 glm::vec3 Character::getPosition() {
@@ -650,4 +667,15 @@ glm::vec3 Character::getPosition() {
 
 void Character::setRunning(bool running) {
     g_running = running;
+}
+
+bool Character::isStunned() {
+    return g_playerStun.isStunned;
+}
+
+void Character::applyStun(float duration) {
+    g_playerStun.isStunned = true;
+    g_playerStun.stunDuration = duration;
+    g_playerStun.stunTimer = 0.0f;
+	g_currentSpeed = 0.0f;
 }
